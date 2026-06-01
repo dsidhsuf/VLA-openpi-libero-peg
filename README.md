@@ -6,7 +6,8 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 ## Contents
 
 - `libero_custom_peg/third_party/libero/libero/libero/bddl_files/`: custom BDDL tasks
-- `libero_custom_peg/third_party/libero/libero/libero/assets/`: custom XML, mesh and texture dependencies
+- `libero_custom_peg/third_party/libero/libero/libero/envs/objects/`: custom
+  programmatic object definitions
 - `libero_custom_peg/benchmark/`: reproducible benchmark configurations and initial states
 - `release_manifest.txt`: complete list of collected files
 
