@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-05-02T15:27:40.055314",
+  "dataset_root": "/root/autodl-tmp/openpi_earbud_proto/libero_lerobot_better_dataset_prompt_single",
+  "single_episode": "/root/autodl-tmp/openpi_earbud_proto/libero_lerobot_better_dataset_prompt_single/easy/episode_seed0_20260501_153922",
+  "levels": {
+    "easy": {
+      "name": "earbud_insert_easy_upright_single",
+      "bddl": "/root/autodl-tmp/openpi_earbud_proto/third_party/libero/libero/libero/bddl_files/libero_90/LIVING_ROOM_SCENE1_insert_the_earbud_into_the_charging_slot_easy.bddl",
+      "language": "Pick up the red rectangular peg, keep it vertical, and insert it into the rectangular slot.",
+      "max_steps": 500,
+      "state_file": "states/easy_init_states.npz",
+      "num_episodes": 1
+    }
+  }
+}

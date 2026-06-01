@@ -1,0 +1,58 @@
+{
+  "source_benchmark_assets": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_red_peg_single1_rawpose",
+  "output_benchmark_assets": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_red_peg_single1_rawpose_slotpose",
+  "level": "easy",
+  "state_file": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_red_peg_single1/states/easy_init_states.npz",
+  "raw_episode": "/root/autodl-tmp/openpi_earbud_proto/libero_lerobot_better_dataset_prompt_single/easy/episode_seed0_20260501_153922",
+  "raw_index": 0,
+  "object_name": "earbud_1",
+  "slot_name": "charging_slot_1",
+  "patch_slot": true,
+  "raw_object_pos": [
+    0.07318314164876938,
+    -0.1058279275894165,
+    0.4631224572658539
+  ],
+  "raw_object_quat_wxyz": [
+    0.7050291895866394,
+    0.0541650615632534,
+    -0.7050291895866394,
+    0.0541650615632534
+  ],
+  "raw_slot_pos": [
+    0.14557789266109467,
+    -0.10363911092281342,
+    0.46799999475479126
+  ],
+  "reports": [
+    {
+      "object_joint": "earbud_1_joint0",
+      "slot_joint": "charging_slot_1_joint0",
+      "before": {
+        "earbud_1_pos": [
+          0.07318314164876938,
+          -0.1058279275894165,
+          0.4631224572658539
+        ],
+        "charging_slot_1_pos": [
+          0.14557789266109467,
+          -0.10363911092281342,
+          0.46799999475479126
+        ]
+      },
+      "after": {
+        "earbud_1_pos": [
+          0.07318314164876938,
+          -0.1058279275894165,
+          0.4631224572658539
+        ],
+        "charging_slot_1_pos": [
+          0.14557789266109467,
+          -0.10363911092281342,
+          0.46799999475479126
+        ]
+      },
+      "state_index": 0
+    }
+  ]
+}

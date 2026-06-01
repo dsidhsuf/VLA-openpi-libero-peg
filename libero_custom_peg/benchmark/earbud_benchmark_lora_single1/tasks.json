@@ -1,0 +1,15 @@
+{
+  "created_at": "2026-04-30T13:13:16.271688",
+  "dataset_root": "/root/autodl-tmp/openpi_earbud_proto/libero_lerobot_dataset_edge_vla",
+  "single_episode": "/root/autodl-tmp/openpi_earbud_proto/libero_lerobot_dataset_edge_vla/easy/episode_seed0_20260429_214438",
+  "levels": {
+    "easy": {
+      "name": "earbud_insert_easy_upright_single",
+      "bddl": "/root/autodl-tmp/openpi_earbud_proto/third_party/libero/libero/libero/bddl_files/libero_90/LIVING_ROOM_SCENE1_insert_the_earbud_into_the_charging_slot_easy.bddl",
+      "language": "Insert the earbud into the charging slot.",
+      "max_steps": 2000,
+      "state_file": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_lora_single1/states/easy_init_states.npz",
+      "num_episodes": 1
+    }
+  }
+}

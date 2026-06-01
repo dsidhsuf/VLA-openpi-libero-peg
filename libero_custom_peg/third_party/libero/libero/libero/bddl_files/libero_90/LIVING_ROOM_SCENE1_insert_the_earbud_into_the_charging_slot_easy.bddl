@@ -1,0 +1,88 @@
+(define (problem LIBERO_Living_Room_Tabletop_Manipulation)
+  (:domain robosuite)
+  (:language insert the earbud into the charging slot)
+    (:regions
+      (charging_slot_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.135 -0.115 0.155 -0.095)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (earbud_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.025 -0.125 0.07500000000000001 -0.07500000000000001)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (cream_cheese_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.175 0.034999999999999996 -0.125 0.08499999999999999)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (tomato_sauce_init_region
+          (:target living_room_table)
+          (:ranges (
+              (0.07500000000000001 -0.225 0.125 -0.17500000000000002)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (ketchup_init_region
+          (:target living_room_table)
+          (:ranges (
+              (-0.225 -0.175 -0.17500000000000002 -0.125)
+            )
+          )
+          (:yaw_rotation (
+              (0.0 0.0)
+            )
+          )
+      )
+      (contain_region
+          (:target charging_slot_1)
+      )
+    )
+
+  (:fixtures
+    living_room_table - living_room_table
+  )
+
+  (:objects
+    earbud_1 - earbud_proto
+    charging_slot_1 - charging_slot_proto
+  )
+
+  (:obj_of_interest
+    earbud_1
+    charging_slot_1
+  )
+
+  (:init
+    (On earbud_1 living_room_table_earbud_init_region)
+    (On charging_slot_1 living_room_table_charging_slot_init_region)
+  )
+
+  (:goal
+    (And (In earbud_1 charging_slot_1_contain_region))
+  )
+
+)

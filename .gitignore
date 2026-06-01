@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+outputs*/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.mp4
+lerobot_ready/
+libero_lerobot_dataset*/
+benchmark_eval*/

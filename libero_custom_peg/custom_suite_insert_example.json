@@ -1,0 +1,38 @@
+{
+  "suite_name": "earbud_insert_custom_suite",
+  "tasks": [
+    {
+      "name": "insert_earbud_into_slot_fixed_inits",
+      "language": "insert the earbud into the charging slot",
+      "bddl_file": "C:/REPLACE_ME/LIVING_ROOM_SCENE1_insert_the_earbud_into_the_charging_slot_easy.bddl",
+      "init_states_file": "C:/REPLACE_ME/earbud_insert_fixed_init_states.pt",
+      "max_steps": 360,
+      "num_wait_steps": 10,
+      "success": {
+        "type": "pose_threshold",
+        "object_name": "earbud_1",
+        "target_name": "charging_slot_1",
+        "xy_thresh": 0.02,
+        "z_above_max": 0.03,
+        "z_above_min": -0.01,
+        "require_gripper_open": true,
+        "gripper_abs_min": 0.03,
+        "require_eef_obj_distance": true,
+        "eef_obj_dist_min": 0.035,
+        "yaw_thresh_deg": 12.0,
+        "object_long_axis_local": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "target_long_axis_local": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "target_axis_yaw_offset_deg": 90.0
+      }
+    }
+  ]
+}
+
