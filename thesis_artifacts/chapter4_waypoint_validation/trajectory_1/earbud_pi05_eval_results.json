@@ -1,0 +1,20 @@
+{
+  "_meta": {
+    "benchmark_assets": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_red_peg_single1_rawpose_slotpose",
+    "server": "http://127.0.0.1:8003"
+  },
+  "earbud_insert_easy_upright_single": {
+    "level": "easy",
+    "success_rate": 1.0,
+    "num_episodes": 1,
+    "episodes": [
+      {
+        "episode_id": 0,
+        "success": true,
+        "steps": 500,
+        "obj_slot_xy": 0.015642289072275162,
+        "obj_slot_z": -0.0035931169986724854
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "benchmark_assets": "/root/autodl-tmp/openpi_earbud_proto/benchmark/earbud_benchmark_red_peg_single1_rawpose_slotpose",
+    "server": "http://127.0.0.1:8003"
+  },
+  "earbud_insert_easy_upright_single": {
+    "level": "easy",
+    "success_rate": 1.0,
+    "num_episodes": 1,
+    "episodes": [
+      {
+        "episode_id": 0,
+        "success": true,
+        "steps": 500,
+        "obj_slot_xy": 0.012837639078497887,
+        "obj_slot_z": -0.019277513027191162,
+        "videos": {
+          "agentview": "/root/autodl-tmp/openpi_earbud_proto/benchmark_eval_replay/waypoint_holdtarget_release_debug/easy/earbud_insert_easy_upright_single/episode_000_succ/agentview.mp4",
+          "robot0_eye_in_hand": "/root/autodl-tmp/openpi_earbud_proto/benchmark_eval_replay/waypoint_holdtarget_release_debug/easy/earbud_insert_easy_upright_single/episode_000_succ/robot0_eye_in_hand.mp4"
+        }
+      }
+    ]
+  }
+}

@@ -101,6 +101,11 @@ insert_from_hover_robot_v4_offset_scan.py
 insert_from_hover_v1.py
 insert_only_from_locked_handoff.py
 inspect_earbud_task_dims.py
+legacy/backup_proto_v1/custom_objects.py
+legacy/backup_proto_v1/test_custom_bddl_scripted_pose.py
+legacy/frozen_baselines/release_v1/baseline_full_chain_release_v1.py
+legacy/frozen_baselines/release_v2/baseline_full_chain_release_v2.py
+legacy/frozen_baselines/release_v2_all_levels/baseline_full_chain_release_v2.py
 pack_npz_to_local_earbud_dataset.py
 patch_benchmark_state_from_raw_demo.py
 patch_image_features_in_info.py

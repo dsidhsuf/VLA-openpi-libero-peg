@@ -12,6 +12,9 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 - `release_manifest.txt`: complete list of collected asset files
 - `code/`: custom task-building, dataset, training, policy-server and evaluation scripts
 - `code_manifest.txt`: complete list of packaged custom scripts
+- `thesis_artifacts/`: lightweight CSV, JSON and NumPy artifacts mapped to thesis experiments
+- `THESIS_ARTIFACTS.md`: thesis artifact scope and chapter mapping
+- `thesis_artifacts_manifest.txt`: complete list of packaged thesis artifacts
 
 ## Installation
 
