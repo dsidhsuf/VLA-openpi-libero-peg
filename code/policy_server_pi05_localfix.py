@@ -1,0 +1,718 @@
+import argparse
+import base64
+import io
+import json
+import os
+import shutil
+import tempfile
+import traceback
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import numpy as np
+import torch
+from PIL import Image
+
+from lerobot.policies.factory import make_pre_post_processors
+
+try:
+    from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+except Exception:
+    try:
+        from lerobot.policies.pi05 import PI05Policy
+    except Exception:
+        from lerobot.policies.pi05 import Pi05Policy as PI05Policy
+
+
+
+def patch_hf_hub_download_for_local_processor_states():
+    """Allow LeRobot processor loader to resolve local absolute checkpoint dirs.
+
+    Some LeRobot versions call hf_hub_download(repo_id=<local absolute path>, ...)
+    when a processor state file is referenced from policy_preprocessor.json or
+    policy_postprocessor.json. HuggingFace Hub then rejects the absolute path as
+    an invalid repo id. This patch intercepts such calls and returns the matching
+    local file from the checkpoint/runtime directory.
+    """
+    try:
+        import huggingface_hub
+        import huggingface_hub.file_download as hf_file_download
+    except Exception as e:
+        print(f"[server] warning: cannot import huggingface_hub for local path patch: {e}")
+        return
+
+    original = getattr(huggingface_hub, "hf_hub_download", None)
+    if original is None:
+        return
+    if getattr(original, "_pi05_local_path_patch", False):
+        return
+
+    def _find_local_file(base_dir: str, filename):
+        if filename is None:
+            return None
+        filename = str(filename)
+        if os.path.isabs(filename) and os.path.exists(filename):
+            return filename
+        direct = os.path.join(base_dir, filename)
+        if os.path.exists(direct):
+            return direct
+        name = os.path.basename(filename)
+        if not name:
+            return None
+        # Shallow recursive search is enough for LeRobot processor states and
+        # avoids scanning huge model folders for too long.
+        for root, dirs, files in os.walk(base_dir):
+            # skip heavy/irrelevant cache folders if any were copied in
+            dirs[:] = [d for d in dirs if d not in {".git", "blobs", "snapshots"}]
+            if name in files:
+                return os.path.join(root, name)
+        return None
+
+    def patched_hf_hub_download(repo_id, filename=None, *args, **kwargs):
+        try:
+            repo_str = os.fspath(repo_id)
+        except TypeError:
+            repo_str = str(repo_id)
+        if os.path.isabs(repo_str) and os.path.isdir(repo_str):
+            local = _find_local_file(repo_str, filename)
+            if local is not None:
+                print(f"[server] local hf_hub_download patch: {filename} -> {local}")
+                return local
+            # If the file is missing, raise a more useful local error instead of
+            # HuggingFace's repo-id validation error.
+            raise FileNotFoundError(
+                f"LeRobot processor requested file {filename!r} under local checkpoint {repo_str!r}, "
+                "but it was not found. Check policy_preprocessor.json / policy_postprocessor.json references."
+            )
+        return original(repo_id, filename=filename, *args, **kwargs)
+
+    patched_hf_hub_download._pi05_local_path_patch = True
+    huggingface_hub.hf_hub_download = patched_hf_hub_download
+    hf_file_download.hf_hub_download = patched_hf_hub_download
+
+    # LeRobot's pipeline.py may have imported hf_hub_download by value.
+    try:
+        import lerobot.processor.pipeline as pipeline
+        if hasattr(pipeline, "hf_hub_download"):
+            pipeline.hf_hub_download = patched_hf_hub_download
+    except Exception as e:
+        print(f"[server] warning: cannot patch lerobot.processor.pipeline hf_hub_download yet: {e}")
+
+    print("[server] patched hf_hub_download for local absolute checkpoint paths")
+
+
+SERVER_STATE = {
+    "policy": None,
+    "device": None,
+    "preprocess": None,
+    "postprocess": None,
+    "policy_path": None,
+    "base_policy_path": None,
+    "adapter_loaded": False,
+    "adapter_path": None,
+    "tokenizer_path": None,
+    "runtime_model_dir": None,
+    "input_keys": None,
+    "state_dim": None,
+    "return_chunk": True,
+    "chunk_len": None,
+    "rotate_images_180": False,
+    "swap_image12": False,
+}
+
+
+def looks_like_peft_adapter(path: str) -> bool:
+    if not path:
+        return False
+    return (
+        os.path.isfile(os.path.join(path, "adapter_config.json"))
+        or os.path.isfile(os.path.join(path, "adapter_model.safetensors"))
+        or os.path.isfile(os.path.join(path, "adapter_model.bin"))
+    )
+
+
+def decode_image_b64_to_numpy(image_b64: str) -> np.ndarray:
+    raw = base64.b64decode(image_b64)
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    return np.array(img, dtype=np.uint8)
+
+
+def rotate_180_hwc(img: np.ndarray) -> np.ndarray:
+    return np.rot90(img, 2, axes=(0, 1)).copy()
+
+
+def normalize_state_dim(state: np.ndarray, target_dim: int) -> np.ndarray:
+    state = np.asarray(state, dtype=np.float32).reshape(-1)
+    if state.shape[0] == target_dim:
+        return state
+    if state.shape[0] > target_dim:
+        return state[:target_dim]
+    out = np.zeros(target_dim, dtype=np.float32)
+    out[: state.shape[0]] = state
+    return out
+
+
+def infer_input_keys(policy):
+    cfg = getattr(policy, "config", None)
+    if cfg is None:
+        return []
+
+    for attr in ["input_features", "observation_features"]:
+        feats = getattr(cfg, attr, None)
+        if feats is not None:
+            try:
+                return list(feats.keys())
+            except Exception:
+                pass
+    return []
+
+
+def infer_state_dim(policy):
+    cfg = getattr(policy, "config", None)
+    if cfg is None:
+        return 8
+
+    for attr in ["input_features", "observation_features"]:
+        feats = getattr(cfg, attr, None)
+        if feats is None:
+            continue
+        if "observation.state" in feats:
+            feat = feats["observation.state"]
+            shape = getattr(feat, "shape", None)
+            if shape is not None and len(shape) > 0:
+                return int(shape[0])
+
+    max_state_dim = getattr(cfg, "max_state_dim", None)
+    if max_state_dim is not None:
+        return int(max_state_dim)
+
+    return 8
+
+
+def link_all(src_dir: str, dst_dir: str):
+    if src_dir is None:
+        return
+    for name in os.listdir(src_dir):
+        src = os.path.join(src_dir, name)
+        dst = os.path.join(dst_dir, name)
+        if os.path.exists(dst):
+            continue
+        try:
+            os.symlink(src, dst)
+        except Exception:
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+
+def overlay_runtime_files(src_dir: str, dst_dir: str):
+    """Overlay lightweight config/processor files from a finetuned checkpoint.
+
+    For PEFT/LoRA checkpoints, model weights live in the base checkpoint plus
+    adapter_model.*, but preprocessing/postprocessing statistics are saved with
+    the finetuned checkpoint. If we keep the base checkpoint's normalizers, the
+    server can return wildly mis-scaled actions after postprocess.
+    """
+    if not src_dir:
+        return
+
+    def collect_referenced_files(obj):
+        names = set()
+
+        def _walk(x):
+            if isinstance(x, dict):
+                for _, v in x.items():
+                    _walk(v)
+            elif isinstance(x, list):
+                for item in x:
+                    _walk(item)
+            elif isinstance(x, str):
+                # Processor JSON usually references state files by relative name.
+                if x.endswith((".safetensors", ".pt", ".pth", ".json", ".pkl", ".npz")):
+                    names.add(x)
+                    names.add(os.path.basename(x))
+
+        _walk(obj)
+        return names
+
+    allow_names = {
+        "config.json",
+        "train_config.json",
+        "policy_preprocessor.json",
+        "policy_postprocessor.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "processor_config.json",
+    }
+    allow_prefixes = (
+        "normalization",
+        "stats",
+        "tokenizer",
+    )
+    deny_weight_names = {
+        "adapter_model.safetensors",
+        "adapter_model.bin",
+        "model.safetensors",
+        "pytorch_model.bin",
+    }
+
+    referenced_names = set()
+    for processor_json in ("policy_preprocessor.json", "policy_postprocessor.json", "preprocessor_config.json"):
+        json_path = os.path.join(src_dir, processor_json)
+        if not os.path.isfile(json_path):
+            continue
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                referenced_names.update(collect_referenced_files(json.load(f)))
+        except Exception as e:
+            print(f"[server] warning: failed to scan {processor_json} references: {e}")
+
+    for name in os.listdir(src_dir):
+        src = os.path.join(src_dir, name)
+        dst = os.path.join(dst_dir, name)
+        if os.path.isdir(src):
+            # Avoid overwriting full weight folders recursively. Processor/tokenizer
+            # folders are safe and useful when present.
+            if name not in {"processor", "tokenizer"}:
+                continue
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            print(f"[server] overlay runtime dir: {name}")
+            continue
+
+        is_processor_state = (
+            name in referenced_names
+            or name.startswith("policy_preprocessor")
+            or name.startswith("policy_postprocessor")
+            or (name.endswith((".safetensors", ".pt", ".pth", ".pkl", ".npz")) and name not in deny_weight_names)
+        )
+
+        if name in allow_names or any(name.startswith(prefix) for prefix in allow_prefixes) or is_processor_state:
+            shutil.copy2(src, dst)
+            print(f"[server] overlay runtime file: {name}")
+
+
+def patch_processor_jsons(runtime_dir: str, tokenizer_path: str):
+    for fname in ["policy_preprocessor.json", "policy_postprocessor.json", "preprocessor_config.json"]:
+        fpath = os.path.join(runtime_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                obj = json.load(f)
+        except Exception:
+            continue
+
+        changed = False
+
+        def _walk(x):
+            nonlocal changed
+            if isinstance(x, dict):
+                for k, v in list(x.items()):
+                    if k == "tokenizer_name":
+                        if isinstance(v, str) and tokenizer_path and v != tokenizer_path:
+                            x[k] = tokenizer_path
+                            changed = True
+                    elif k in ["processor_name", "pretrained_model_name_or_path"]:
+                        if isinstance(v, str) and v == "google/paligemma-3b-pt-224":
+                            x[k] = tokenizer_path
+                            changed = True
+                    else:
+                        _walk(v)
+            elif isinstance(x, list):
+                for item in x:
+                    _walk(item)
+
+        _walk(obj)
+
+        if changed:
+            with open(fpath, "w", encoding="utf-8") as f:
+                json.dump(obj, f, indent=2, ensure_ascii=False)
+            print(f"[server] patched processor config: {fpath}")
+
+
+def build_runtime_model_dir(policy_path: str, tokenizer_path: str, overlay_path=None) -> str:
+    runtime_dir = os.path.join(tempfile.gettempdir(), "pi05_libero_runtime_model")
+
+    if os.path.exists(runtime_dir):
+        shutil.rmtree(runtime_dir)
+    os.makedirs(runtime_dir, exist_ok=True)
+
+    link_all(policy_path, runtime_dir)
+    if overlay_path and os.path.abspath(overlay_path) != os.path.abspath(policy_path):
+        overlay_runtime_files(overlay_path, runtime_dir)
+    if tokenizer_path and os.path.abspath(tokenizer_path) != os.path.abspath(policy_path):
+        link_all(tokenizer_path, runtime_dir)
+
+    patch_processor_jsons(runtime_dir, tokenizer_path)
+    return runtime_dir
+
+
+def build_raw_frame_from_payload(payload, state_dim: int):
+    raw_state = np.asarray(payload["observation.state"], dtype=np.float32)
+    state = normalize_state_dim(raw_state, state_dim)
+
+    image = decode_image_b64_to_numpy(payload["observation.images.image"])
+    image2 = decode_image_b64_to_numpy(payload["observation.images.image2"])
+
+    # The eval client already sends images in the same orientation as the
+    # recorded LeRobot videos. Keep this off unless you intentionally use an
+    # older client that does not flip images before sending them.
+    if SERVER_STATE["rotate_images_180"]:
+        image = rotate_180_hwc(image)
+        image2 = rotate_180_hwc(image2)
+    if SERVER_STATE["swap_image12"]:
+        image, image2 = image2, image
+
+    empty_camera = np.zeros_like(image, dtype=np.uint8)
+
+    task = payload.get("task", "")
+
+    return {
+        "observation.images.image": image,
+        "observation.images.image2": image2,
+        "observation.images.empty_camera_0": empty_camera,
+        # PI0.5's processor discretizes state before our later tensor batching
+        # helper runs. It therefore expects a batched state array here.
+        "observation.state": state[None, :],
+        "task": task,
+        "task_description": task,
+        "language_instruction": task,
+    }
+
+
+def prepare_batch_for_policy(batch, device):
+    out = {}
+    for k, v in batch.items():
+        if isinstance(v, str):
+            out[k] = v
+            continue
+        if isinstance(v, (list, tuple)) and len(v) > 0 and isinstance(v[0], str):
+            out[k] = list(v)
+            continue
+
+        if isinstance(v, np.ndarray):
+            t = torch.from_numpy(v)
+        elif isinstance(v, torch.Tensor):
+            t = v
+        elif isinstance(v, (list, tuple)):
+            try:
+                arr = np.asarray(v)
+                if arr.dtype.kind in ["U", "S", "O"]:
+                    out[k] = v
+                    continue
+                t = torch.from_numpy(arr)
+            except Exception:
+                out[k] = v
+                continue
+        else:
+            out[k] = v
+            continue
+
+        # Normalize image tensors to BCHW.
+        if k.startswith("observation.images."):
+            if t.ndim == 3:
+                # HWC -> CHW if needed, then add batch dimension.
+                if t.shape[-1] in (1, 3):
+                    t = t.permute(2, 0, 1).contiguous()
+                t = t.unsqueeze(0)
+            elif t.ndim == 4 and t.shape[-1] in (1, 3):
+                # BHWC -> BCHW
+                t = t.permute(0, 3, 1, 2).contiguous()
+
+        elif k == "observation.state" and t.ndim == 1:
+            t = t.unsqueeze(0)
+        elif "language" in k and t.ndim == 1:
+            t = t.unsqueeze(0)
+        elif "attention_mask" in k and t.ndim == 1:
+            t = t.unsqueeze(0)
+
+        out[k] = t.to(device)
+
+    return out
+
+
+def tensor_or_action_dict_to_numpy(value) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy()
+    if isinstance(value, dict) and "action" in value:
+        action = value["action"]
+        if isinstance(action, torch.Tensor):
+            return action.detach().cpu().numpy()
+        return np.asarray(action)
+    return np.asarray(value)
+
+
+def postprocess_action_array(action_tensor: torch.Tensor, postprocess) -> np.ndarray:
+    """Post-process normalized actions while preserving a possible time axis."""
+    original_shape = tuple(action_tensor.shape)
+    if action_tensor.ndim == 3:
+        batch, horizon, action_dim = action_tensor.shape
+        flat = action_tensor.reshape(batch * horizon, action_dim)
+        processed = postprocess(flat)
+        arr = tensor_or_action_dict_to_numpy(processed)
+        arr = np.asarray(arr, dtype=np.float32).reshape(batch, horizon, -1)
+        return arr
+
+    processed = postprocess(action_tensor)
+    arr = tensor_or_action_dict_to_numpy(processed)
+    arr = np.asarray(arr, dtype=np.float32)
+    if len(original_shape) == 2 and arr.ndim == 1:
+        arr = arr.reshape(original_shape[0], -1)
+    return arr
+
+
+@torch.inference_mode()
+def infer_action(payload):
+    policy = SERVER_STATE["policy"]
+    preprocess = SERVER_STATE["preprocess"]
+    postprocess = SERVER_STATE["postprocess"]
+    state_dim = SERVER_STATE["state_dim"]
+
+    raw_frame = build_raw_frame_from_payload(payload, state_dim)
+    batch = preprocess(raw_frame)
+    batch = prepare_batch_for_policy(batch, SERVER_STATE["device"])
+
+    if not hasattr(infer_action, "_printed"):
+        print("[server] input_keys from checkpoint:", SERVER_STATE["input_keys"])
+        print("[server] inferred state_dim:", SERVER_STATE["state_dim"])
+        print("[server] runtime_model_dir:", SERVER_STATE["runtime_model_dir"])
+        print("[server] preprocessed batch keys:", list(batch.keys()))
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                print(f"[server] {k}: shape={tuple(v.shape)}, dtype={v.dtype}, device={v.device}")
+        infer_action._printed = True
+
+    if SERVER_STATE["return_chunk"] and hasattr(policy, "predict_action_chunk"):
+        pred_action = policy.predict_action_chunk(batch)
+        action = postprocess_action_array(pred_action, postprocess)
+
+        if action.ndim != 3 or action.shape[0] != 1:
+            raise RuntimeError(
+                f"Expected action chunk shape (1, T, 7) after postprocess, got shape={tuple(action.shape)}"
+            )
+
+        action = action[0]
+        target_chunk_len = SERVER_STATE["chunk_len"]
+        if target_chunk_len is not None and int(target_chunk_len) > 0:
+            action = action[: int(target_chunk_len)]
+
+        if action.ndim != 2 or action.shape[1] < 7:
+            raise RuntimeError(
+                f"Expected action chunk shape (T, >=7) after postprocess, got shape={tuple(action.shape)}"
+            )
+
+        action = action[:, :7].astype(np.float32)
+        return action.tolist()
+
+    pred_action = policy.select_action(batch)
+    action = postprocess_action_array(pred_action, postprocess)
+
+    if action.ndim == 2 and action.shape[0] == 1:
+        action = action[0]
+    elif action.ndim != 1:
+        action = action.reshape(-1)
+
+    if action.shape[0] < 7:
+        raise RuntimeError(
+            f"Expected at least 7-dim action from pi0_libero_base after postprocess, got shape={tuple(action.shape)}"
+        )
+
+    action = action[:7]
+    return action.astype(np.float32).tolist()
+
+
+class PolicyHandler(BaseHTTPRequestHandler):
+    def _send_json(self, obj, code=200):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send_json({
+                "status": "ok",
+                "policy_path": SERVER_STATE["policy_path"],
+                "base_policy_path": SERVER_STATE["base_policy_path"],
+                "adapter_loaded": SERVER_STATE["adapter_loaded"],
+                "adapter_path": SERVER_STATE["adapter_path"],
+                "tokenizer_path": SERVER_STATE["tokenizer_path"],
+                "runtime_model_dir": SERVER_STATE["runtime_model_dir"],
+                "input_keys": SERVER_STATE["input_keys"],
+                "state_dim": SERVER_STATE["state_dim"],
+                "return_chunk": SERVER_STATE["return_chunk"],
+                "chunk_len": SERVER_STATE["chunk_len"],
+                "rotate_images_180": SERVER_STATE["rotate_images_180"],
+                "swap_image12": SERVER_STATE["swap_image12"],
+            })
+        else:
+            self._send_json({"error": "not found"}, code=404)
+
+    def do_POST(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(content_length)
+            payload = json.loads(raw.decode("utf-8")) if raw else {}
+
+            if self.path == "/reset":
+                policy = SERVER_STATE["policy"]
+                if hasattr(policy, "reset"):
+                    try:
+                        policy.reset()
+                    except Exception:
+                        pass
+                self._send_json({"status": "reset"})
+                return
+
+            if self.path == "/infer":
+                action = infer_action(payload)
+                self._send_json({"action": action})
+                return
+
+            self._send_json({"error": "not found"}, code=404)
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            print("[server] infer exception:")
+            print(tb)
+            self._send_json({
+                "error": repr(e),
+                "traceback": tb,
+            }, code=500)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--policy_path", type=str, required=True)
+    parser.add_argument(
+        "--base_policy_path",
+        type=str,
+        default=None,
+        help=(
+            "Base full PI0.5 checkpoint path used when --policy_path points to a PEFT/LoRA adapter. "
+            "For LoRA checkpoints, set this to /root/autodl-tmp/hf_models/pi05_libero_finetuned_v044."
+        ),
+    )
+    parser.add_argument("--tokenizer_path", type=str, default=None)
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument(
+        "--single_action",
+        action="store_true",
+        help="Return only one action via policy.select_action() instead of a full action chunk.",
+    )
+    parser.add_argument(
+        "--chunk_len",
+        type=int,
+        default=None,
+        help="Max number of actions to return from predict_action_chunk(). Default uses checkpoint chunk_size.",
+    )
+    parser.add_argument(
+        "--rotate_images_180",
+        action="store_true",
+        help="Legacy compatibility: rotate decoded images by 180 degrees inside the server.",
+    )
+    parser.add_argument(
+        "--swap_image12",
+        action="store_true",
+        help="Swap observation.images.image and observation.images.image2 before preprocessing.",
+    )
+    args = parser.parse_args()
+
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    policy_path = args.policy_path
+    tokenizer_path = args.tokenizer_path or args.policy_path
+    adapter_loaded = False
+    adapter_path = None
+
+    is_adapter = looks_like_peft_adapter(policy_path)
+    if is_adapter:
+        if not args.base_policy_path:
+            raise RuntimeError(
+                "--policy_path looks like a PEFT/LoRA adapter checkpoint, but --base_policy_path was not provided. "
+                "Example: --base_policy_path /root/autodl-tmp/hf_models/pi05_libero_finetuned_v044"
+            )
+        load_policy_path = args.base_policy_path
+        adapter_path = policy_path
+        print(f"[server] detected PEFT/LoRA adapter: {adapter_path}")
+        print(f"[server] loading base policy first: {load_policy_path}")
+    else:
+        load_policy_path = policy_path
+
+    runtime_model_dir = build_runtime_model_dir(
+        load_policy_path,
+        tokenizer_path,
+        overlay_path=adapter_path if is_adapter else None,
+    )
+
+    print(f"[server] loading pi05 policy from: {load_policy_path}")
+    print(f"[server] tokenizer path: {tokenizer_path}")
+    print(f"[server] runtime model dir: {runtime_model_dir}")
+    print(f"[server] using device: {device}")
+
+    patch_hf_hub_download_for_local_processor_states()
+
+    policy = PI05Policy.from_pretrained(runtime_model_dir).to(device).eval()
+
+    if is_adapter:
+        try:
+            from peft import PeftModel
+        except Exception as e:
+            raise RuntimeError(
+                "This checkpoint requires PEFT/LoRA adapter loading, but `peft` is not installed. "
+                "Run: python -m pip install -U peft"
+            ) from e
+        policy = PeftModel.from_pretrained(policy, adapter_path).to(device).eval()
+        adapter_loaded = True
+        print(f"[server] loaded PEFT/LoRA adapter from: {adapter_path}")
+
+    preprocess, postprocess = make_pre_post_processors(
+        policy.config,
+        runtime_model_dir,
+        preprocessor_overrides={
+            "device_processor": {"device": str(device)},
+            "tokenizer_processor": {"tokenizer_name": tokenizer_path},
+        },
+    )
+
+    input_keys = infer_input_keys(policy)
+    state_dim = infer_state_dim(policy)
+
+    SERVER_STATE["policy"] = policy
+    SERVER_STATE["device"] = device
+    SERVER_STATE["preprocess"] = preprocess
+    SERVER_STATE["postprocess"] = postprocess
+    SERVER_STATE["policy_path"] = policy_path
+    SERVER_STATE["base_policy_path"] = args.base_policy_path
+    SERVER_STATE["adapter_loaded"] = adapter_loaded
+    SERVER_STATE["adapter_path"] = adapter_path
+    SERVER_STATE["tokenizer_path"] = tokenizer_path
+    SERVER_STATE["runtime_model_dir"] = runtime_model_dir
+    SERVER_STATE["input_keys"] = input_keys
+    SERVER_STATE["state_dim"] = state_dim
+    SERVER_STATE["return_chunk"] = not args.single_action
+    SERVER_STATE["chunk_len"] = args.chunk_len
+    SERVER_STATE["rotate_images_180"] = bool(args.rotate_images_180)
+    SERVER_STATE["swap_image12"] = bool(args.swap_image12)
+
+    print("[server] checkpoint input_keys:", input_keys)
+    print("[server] checkpoint state_dim:", state_dim)
+    print("[server] return_chunk:", SERVER_STATE["return_chunk"])
+    print("[server] chunk_len:", SERVER_STATE["chunk_len"])
+    print("[server] rotate_images_180:", SERVER_STATE["rotate_images_180"])
+    print("[server] swap_image12:", SERVER_STATE["swap_image12"])
+
+    httpd = HTTPServer((args.host, args.port), PolicyHandler)
+    print(f"[server] listening on http://{args.host}:{args.port}")
+    httpd.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -9,7 +9,9 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 - `libero_custom_peg/third_party/libero/libero/libero/envs/objects/`: custom
   programmatic object definitions
 - `libero_custom_peg/benchmark/`: reproducible benchmark configurations and initial states
-- `release_manifest.txt`: complete list of collected files
+- `release_manifest.txt`: complete list of collected asset files
+- `code/`: custom task-building, dataset, training, policy-server and evaluation scripts
+- `code_manifest.txt`: complete list of packaged custom scripts
 
 ## Installation
 
@@ -18,3 +20,4 @@ Overlay the packaged files onto the corresponding paths of an existing LIBERO ch
 ## Notes
 
 Model checkpoints, generated training datasets and evaluation videos are intentionally excluded.
+Some scripts retain local default paths from the original experiment environment; adjust them for your LIBERO and OpenPI checkout before running.
