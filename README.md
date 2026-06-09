@@ -27,7 +27,7 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 - eval为评估脚本；
 - finetune为微调脚本，包括lora与全量,推荐使用openpi的huggingface上的微调命令
 - 由于libero与lerobot搭建环境存在差异，推荐使用服务端（policy.py）-客户端(eval)解耦形式处理
-- 
+
 
 ## 联系
 
