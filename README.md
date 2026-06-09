@@ -1,9 +1,9 @@
-# VLA OpenPI LIBERO Peg-Insertion Assets
+# VLA OpenPI LIBERO Peg-Insertion Benchmark
 
 Custom LIBERO assets and benchmark configurations for a peg-insertion task:
 grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 
-## Contents
+## VLA OpenPI LIBERO Peg-Insertion Assets
 
 - `libero_custom_peg/third_party/libero/libero/libero/bddl_files/`: custom BDDL tasks
 - `libero_custom_peg/third_party/libero/libero/libero/envs/objects/`: custom
