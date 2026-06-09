@@ -29,7 +29,6 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 - 由于libero与lerobot搭建环境存在差异，推荐使用服务端（policy.py）-客户端(eval)解耦形式处理
 - 
 
-## 闭环验证
+## 联系
 
-Model checkpoints, generated training datasets and evaluation videos are intentionally excluded.
-Some scripts retain local default paths from the original experiment environment; adjust them for your LIBERO and OpenPI checkout before running.
+如果你需要原论文，或者更多更详细的资料，联系QQ：2687439586
