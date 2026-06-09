@@ -15,12 +15,21 @@ grasp a thin rectangular peg, align it vertically, and insert it into a slot.
 - `thesis_artifacts/`: lightweight CSV, JSON and NumPy artifacts mapped to thesis experiments
 - `THESIS_ARTIFACTS.md`: thesis artifact scope and chapter mapping
 - `thesis_artifacts_manifest.txt`: complete list of packaged thesis artifacts
+- 该资产文件借助于libero固有资产（可组合几何体）进行调整、组合，仅供参考。
+ 
+## 脚本生成文件等代码文件
 
-## Installation
 
-Overlay the packaged files onto the corresponding paths of an existing LIBERO checkout.
+- 该资产文件借助于libero固有资产（可组合几何体）进行调整、组合，仅供参考。
+- augment与create等文件皆是数据生成脚本
+- 针对生成的脚本结果可以使用convert脚本进行对上述脚本生成代码生成的数据进行lerobot格式的转换
+- build代码为根据数据初始状态创建benchmark
+- eval为评估脚本；
+- finetune为微调脚本，包括lora与全量,推荐使用openpi的huggingface上的微调命令
+- 由于libero与lerobot搭建环境存在差异，推荐使用服务端（policy.py）-客户端(eval)解耦形式处理
+- 
 
-## Notes
+## 闭环验证
 
 Model checkpoints, generated training datasets and evaluation videos are intentionally excluded.
 Some scripts retain local default paths from the original experiment environment; adjust them for your LIBERO and OpenPI checkout before running.
